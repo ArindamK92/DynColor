@@ -114,7 +114,34 @@ __global__ void deleteEdgeFromAdj(changeEdge* allChange_Del_device, int totalCha
 	}
 }
 
-__global__ void deleteEdge(changeEdge* allChange_Del_device, int* vertexcolor, int* previosVertexcolor, int totalChangeEdges_Del, ColWt* AdjListFull_device, int* AdjListTracker_device, int* affected_del, int* change) {
+
+__global__ void deleteEdgeFromAdj_border(changeEdge* allChange_Del_cross_device, int totalChangeEdges_Del_cross, ColWt* AdjListFull_border_device, int* AdjListTracker_border_device) {
+	//int index = threadIdx.x + blockIdx.x * blockDim.x;
+	for (int index = blockIdx.x * blockDim.x + threadIdx.x; index < totalChangeEdges_Del_cross; index += blockDim.x * gridDim.x)
+	{
+		////Deletion case
+		int node_1 = allChange_Del_cross_device[index].node1; //This node is in this partition
+		int node_2 = allChange_Del_cross_device[index].node2; //This node is a opv
+
+		//mark the edge as deleted in Adjlist
+		//for (int j = AdjListTracker_border_device[node_2]; j < AdjListTracker_border_device[node_2 + 1]; j++) {
+		//	if (AdjListFull_border_device[j].col == node_1) {
+		//		AdjListFull_border_device[j].flag = -1; //flag set -1 to indicate deleted
+		//		//printf("inside del inedge: %d %d %d \n", node_1, node_2, edge_weight);
+		//	}
+
+		//}
+		for (int j = AdjListTracker_border_device[node_1]; j < AdjListTracker_border_device[node_1 + 1]; j++) {
+			if (AdjListFull_border_device[j].col == node_2) {
+				AdjListFull_border_device[j].flag = -1;
+			}
+		}
+	}
+}
+
+
+
+__global__ void deleteEdge(changeEdge* allChange_Del_device, int* vertexcolor, int* previosVertexcolor, int totalChangeEdges_Del, ColWt* AdjListFull_device, int* AdjListTracker_device, int* affected_del, int* change, int* borderVertexFlag, int* vertexcolor_opv, ColWt* AdjListFull_border_device, int* AdjListTracker_border_device, int* affected_marked_border) {
 
 	for (int index = blockIdx.x * blockDim.x + threadIdx.x; index < totalChangeEdges_Del; index += blockDim.x * gridDim.x)
 	{
@@ -122,6 +149,11 @@ __global__ void deleteEdge(changeEdge* allChange_Del_device, int* vertexcolor, i
 		int targeted_node = vertexcolor[allChange_Del_device[index].node1] > vertexcolor[allChange_Del_device[index].node2] ? allChange_Del_device[index].node1 : allChange_Del_device[index].node2;
 
 		int SCMask = computeSC(AdjListFull_device, AdjListTracker_device, targeted_node, vertexcolor);
+		if (borderVertexFlag[targeted_node] == 1) //If node is a border vertex
+		{
+			int SCMask_opv = computeSC(AdjListFull_border_device, AdjListTracker_border_device, targeted_node, vertexcolor_opv);
+			SCMask = SCMask | SCMask_opv;
+		}
 		int smallest_available_color = FirstZeroBit(SCMask);
 
 		if (smallest_available_color != vertexcolor[targeted_node])
@@ -130,13 +162,57 @@ __global__ void deleteEdge(changeEdge* allChange_Del_device, int* vertexcolor, i
 			vertexcolor[targeted_node] = smallest_available_color;
 			affected_del[targeted_node] = 1;
 			*change = 1;
+			if (borderVertexFlag[targeted_node] == 1) //If node is a border vertex
+			{
+				affected_marked_border[targeted_node] = 1;
+			}
 			//printf("color of %d became:%d", targeted_node, vertexcolor[targeted_node]);
 		}
 		//printf("affected_del flag for %d = %d \n *change = %d\n", targeted_node, affected_del[targeted_node], *change);
 	}
 }
 
-__global__ void insEdge(changeEdge* allChange_Ins_device, int* vertexcolor, int* previosVertexcolor, int totalChangeEdges_Ins, ColWt* AdjListFull_device, int* AdjListTracker_device, int* affected_marked, int* change) {
+__global__ void deleteEdge_cross(changeEdge* allChange_Del_cross_device, int* vertexcolor, int* previosVertexcolor, int* vertexcolor_opv, /*int* previosVertexcolor_opv,*/ int totalChangeEdges_Del_cross, ColWt* AdjListFull_device, int* AdjListTracker_device, ColWt* AdjListFull_border_device, int* AdjListTracker_border_device, int* affected_del, int* affected_marked_border, int* change) {
+
+	for (int index = blockIdx.x * blockDim.x + threadIdx.x; index < totalChangeEdges_Del_cross; index += blockDim.x * gridDim.x)
+	{
+		////Deletion case
+		int targeted_node = vertexcolor[allChange_Del_cross_device[index].node1] > vertexcolor[allChange_Del_cross_device[index].node2] ? allChange_Del_cross_device[index].node1 : allChange_Del_cross_device[index].node2;
+		if (targeted_node == allChange_Del_cross_device[index].node1) //node2 is an opv. So we skip if targeted_node == allChange_Del_cross_device[index].node2
+		{
+			int SCMask_internal = computeSC(AdjListFull_device, AdjListTracker_device, targeted_node, vertexcolor);
+			int SCMask_opv = computeSC(AdjListFull_border_device, AdjListTracker_border_device, targeted_node, vertexcolor_opv);
+			int SCMask = SCMask_internal | SCMask_opv;
+			int smallest_available_color = FirstZeroBit(SCMask);
+
+			if (smallest_available_color != vertexcolor[targeted_node])
+			{
+				previosVertexcolor[targeted_node] = vertexcolor[targeted_node];
+				vertexcolor[targeted_node] = smallest_available_color;
+				affected_del[targeted_node] = 1;
+				affected_marked_border[targeted_node] = 1;
+				*change = 1;
+				//printf("color of %d became:%d", targeted_node, vertexcolor[targeted_node]);
+			}
+		}
+		//printf("affected_del flag for %d = %d \n *change = %d\n", targeted_node, affected_del[targeted_node], *change);
+	}
+}
+
+__global__ void compute_SC_size(int total_borderVertex,int* borderVertexList, int* SC_size_border, ColWt* AdjListFull_device, int* AdjListTracker_device, ColWt* AdjListFull_border_device, int* AdjListTracker_border_device, int* vertexcolor, int* vertexcolor_opv)
+{
+	for (int index = blockIdx.x * blockDim.x + threadIdx.x; index < total_borderVertex; index += blockDim.x * gridDim.x)
+	{
+		int targeted_node = borderVertexList[index];
+		unsigned int SCMask_internal = computeSC(AdjListFull_device, AdjListTracker_device, targeted_node, vertexcolor);
+		unsigned int SCMask_opv = computeSC(AdjListFull_border_device, AdjListTracker_border_device, targeted_node, vertexcolor_opv);
+		unsigned int SCMask = SCMask_internal | SCMask_opv;
+		int SC_size = BitCount(SCMask);
+		SC_size_border[targeted_node] = SC_size;
+	}
+}
+
+__global__ void insEdge(changeEdge* allChange_Ins_device, int* vertexcolor, int* previosVertexcolor, int totalChangeEdges_Ins, ColWt* AdjListFull_device, int* AdjListTracker_device, int* affected_marked, int* change, int* borderVertexFlag, int* vertexcolor_opv, ColWt* AdjListFull_border_device, int* AdjListTracker_border_device, int* affected_marked_border) {
 
 	for (int index = blockIdx.x * blockDim.x + threadIdx.x; index < totalChangeEdges_Ins; index += blockDim.x * gridDim.x)
 	{
@@ -144,17 +220,61 @@ __global__ void insEdge(changeEdge* allChange_Ins_device, int* vertexcolor, int*
 		{
 			int SC_size_node1;
 			unsigned int sc_node1 = computeSC(AdjListFull_device, AdjListTracker_device, allChange_Ins_device[index].node1, vertexcolor);
+			if (borderVertexFlag[allChange_Ins_device[index].node1] == 1) //If node is a border vertex
+			{
+				int SCMask_opv = computeSC(AdjListFull_border_device, AdjListTracker_border_device, allChange_Ins_device[index].node1, vertexcolor_opv);
+				sc_node1 = sc_node1 | SCMask_opv;
+			}
 			SC_size_node1 = BitCount(sc_node1);
 			int SC_size_node2;
 			unsigned int sc_node2 = computeSC(AdjListFull_device, AdjListTracker_device, allChange_Ins_device[index].node2, vertexcolor);
+			if (borderVertexFlag[allChange_Ins_device[index].node2] == 1) //If node is a border vertex
+			{
+				int SCMask_opv = computeSC(AdjListFull_border_device, AdjListTracker_border_device, allChange_Ins_device[index].node2, vertexcolor_opv);
+				sc_node1 = sc_node1 | SCMask_opv;
+			}
 			SC_size_node2 = BitCount(sc_node2);
 			int targeted_node = SC_size_node1 < SC_size_node2 ? allChange_Ins_device[index].node1 : allChange_Ins_device[index].node2;
 			int SCMask = SC_size_node1 < SC_size_node2 ? sc_node1 : sc_node2;
+			
 			int smallest_available_color = FirstZeroBit(SCMask);
 			previosVertexcolor[targeted_node] = vertexcolor[targeted_node];
 			vertexcolor[targeted_node] = smallest_available_color;
 			affected_marked[targeted_node] = 1;
+			if (borderVertexFlag[targeted_node] == 1) //If node is a border vertex
+			{
+				affected_marked_border[targeted_node] = 1;
+			}
 			*change = 1;
+			//printf("Ins: color of %d became:%d", targeted_node, vertexcolor[targeted_node]);	
+			//printf("affected_ins flag for %d = %d \n *change = %d\n", targeted_node, affected_marked[targeted_node], *change);
+		}
+
+	}
+}
+
+__global__ void insEdge_cross(changeEdge* allChange_Ins_cross_device, int* vertexcolor, int* previosVertexcolor, int* vertexcolor_opv, int totalChangeEdges_Ins_cross, ColWt* AdjListFull_device, int* AdjListTracker_device, ColWt* AdjListFull_border_device, int* AdjListTracker_border_device, int* affected_marked, int* affected_marked_border, int* change, int* SC_size_border, int* SC_size_opv) {
+
+	for (int index = blockIdx.x * blockDim.x + threadIdx.x; index < totalChangeEdges_Ins_cross; index += blockDim.x * gridDim.x)
+	{
+		if (vertexcolor[allChange_Ins_cross_device[index].node1] == vertexcolor_opv[allChange_Ins_cross_device[index].node2])
+		{
+			int SC_size_node1 = SC_size_border[allChange_Ins_cross_device[index].node1];
+			int SC_size_node2 = SC_size_opv[allChange_Ins_cross_device[index].node2];
+			int targeted_node = SC_size_node1 < SC_size_node2 ? allChange_Ins_cross_device[index].node1 : allChange_Ins_cross_device[index].node2;
+			if (targeted_node == allChange_Ins_cross_device[index].node1)
+			{
+				int SCMask_internal = computeSC(AdjListFull_device, AdjListTracker_device, targeted_node, vertexcolor);
+				int SCMask_opv = computeSC(AdjListFull_border_device, AdjListTracker_border_device, targeted_node, vertexcolor_opv);
+				int SCMask = SCMask_internal | SCMask_opv;
+				int smallest_available_color = FirstZeroBit(SCMask);
+				previosVertexcolor[targeted_node] = vertexcolor[targeted_node];
+				vertexcolor[targeted_node] = smallest_available_color;
+				affected_marked[targeted_node] = 1;
+				affected_marked_border[targeted_node] = 1;
+				*change = 1;
+			}
+			
 			//printf("Ins: color of %d became:%d", targeted_node, vertexcolor[targeted_node]);	
 			//printf("affected_ins flag for %d = %d \n *change = %d\n", targeted_node, affected_marked[targeted_node], *change);
 		}

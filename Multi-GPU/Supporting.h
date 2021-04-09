@@ -74,17 +74,17 @@ void transfer_data_to_GPU(vector<ColList>& AdjList, int*& AdjListTracker, vector
 	//cudaError_t cudaStatus;
 
 	//create 1D array from 2D to fit it in GPU
-	cout << "creating 1D array from 2D to fit it in GPU" << endl;
+	//cout << "creating 1D array from 2D to fit it in GPU" << endl;
 	AdjListTracker[0] = 0; //start pointer points to the first index of InEdgesList
 	for (int i = 0; i < totalLocalVertices; i++) {
 		AdjListTracker[i + 1] = AdjListTracker[i] + AdjList.at(i).size();
 		AdjListFull.insert(std::end(AdjListFull), std::begin(AdjList.at(i)), std::end(AdjList.at(i)));
 	}
-	cout << "creating 1D array from 2D completed" << endl;
+	//cout << "creating 1D array from 2D completed" << endl;
 
 
 	//Transferring input graph and change edges data to GPU
-	cout << "Transferring graph data from CPU to GPU" << endl;
+	//cout << "Transferring graph data from CPU to GPU" << endl;
 	auto startTime_transfer = high_resolution_clock::now();
 
 	CUDA_RT_CALL(cudaMallocManaged(&AdjListFull_device, totalLocalEdges * sizeof(ColWt))); //totalLocalEdges = (2 * (edges + totalInsertion))
@@ -135,6 +135,78 @@ void transfer_data_to_GPU(vector<ColList>& AdjList, int*& AdjListTracker, vector
 	auto stopTime_transfer = high_resolution_clock::now();//Time calculation ends
 	auto duration_transfer = duration_cast<microseconds>(stopTime_transfer - startTime_transfer);// duration calculation
 	cout << "**Time taken to transfer graph data from CPU to GPU: "
+		<< float(duration_transfer.count()) / 1000 << " milliseconds**" << endl;
+}
+
+
+//this function is related to border vertices, opv, and cross edges 
+void transfer_border_data_to_GPU(vector<ColList>& AdjList_border, int*& AdjListTracker_border, vector<ColWt>& AdjListFull_border, ColWt*& AdjListFull_border_device,
+	int totalLocalVertices, int totalCrossEdges, int*& AdjListTracker_border_device, bool zeroInsFlag_cross,
+	vector<changeEdge>& allChange_Ins_cross, changeEdge*& allChange_Ins_cross_device, int totalChangeEdges_Ins_cross,
+	int deviceId, int totalChangeEdges_Del_cross, bool zeroDelFlag_cross, changeEdge*& allChange_Del_cross_device,
+	int*& counter_border, int*& affected_marked_border, int*& affectedNodeList_border, int*& previosVertexcolor_opv, /*int*& updatedAffectedNodeList_del, int*& updated_counter_del,*/ vector<changeEdge>& allChange_Del_cross, size_t  numberOfBlocks, int total_opv)
+{
+	//cudaError_t cudaStatus;
+
+	//create 1D array from 2D to fit it in GPU
+	//cout << "creating 1D array from 2D to fit it in GPU" << endl;
+	AdjListTracker_border[0] = 0; //start pointer points to the first index of InEdgesList
+	for (int i = 0; i < totalLocalVertices; i++) {
+		AdjListTracker_border[i + 1] = AdjListTracker_border[i] + AdjList_border.at(i).size();
+		AdjListFull_border.insert(std::end(AdjListFull_border), std::begin(AdjList_border.at(i)), std::end(AdjList_border.at(i)));
+	}
+	//cout << "creating 1D array from 2D completed" << endl;
+
+
+	//Transferring input graph and change edges data to GPU
+	//cout << "Transferring graph data from CPU to GPU" << endl;
+	auto startTime_transfer = high_resolution_clock::now();
+
+	CUDA_RT_CALL(cudaMallocManaged(&AdjListFull_border_device, totalCrossEdges * sizeof(ColWt))); //totalCrossEdges includes inserted new cross edges also
+	std::copy(AdjListFull_border.begin(), AdjListFull_border.end(), AdjListFull_border_device);
+
+
+	CUDA_RT_CALL(cudaMalloc((void**)&AdjListTracker_border_device, (totalLocalVertices + 1) * sizeof(int)));
+	CUDA_RT_CALL(cudaMemcpy(AdjListTracker_border_device, AdjListTracker_border, (totalLocalVertices + 1) * sizeof(int), cudaMemcpyHostToDevice));
+
+	////Asynchronous prefetching of data
+	CUDA_RT_CALL(cudaMemPrefetchAsync(AdjListFull_border_device, totalCrossEdges * sizeof(ColWt), deviceId));
+
+	if (zeroInsFlag_cross != true) {
+		CUDA_RT_CALL(cudaMallocManaged(&allChange_Ins_cross_device, totalChangeEdges_Ins_cross * sizeof(changeEdge)));
+		std::copy(allChange_Ins_cross.begin(), allChange_Ins_cross.end(), allChange_Ins_cross_device);
+		//set cudaMemAdviseSetReadMostly by the GPU for change edge data
+		CUDA_RT_CALL(cudaMemAdvise(allChange_Ins_cross_device, totalChangeEdges_Ins_cross * sizeof(changeEdge), cudaMemAdviseSetReadMostly, deviceId));
+		//Asynchronous prefetching of data
+		CUDA_RT_CALL(cudaMemPrefetchAsync(allChange_Ins_cross_device, totalChangeEdges_Ins_cross * sizeof(changeEdge), deviceId));
+	}
+
+	if (zeroDelFlag_cross != true) {
+		CUDA_RT_CALL(cudaMallocManaged(&allChange_Del_cross_device, totalChangeEdges_Del_cross * sizeof(changeEdge)));
+		std::copy(allChange_Del_cross.begin(), allChange_Del_cross.end(), allChange_Del_cross_device);
+		//set cudaMemAdviseSetReadMostly by the GPU for change edge data
+		CUDA_RT_CALL(cudaMemAdvise(allChange_Del_cross_device, totalChangeEdges_Del_cross * sizeof(changeEdge), cudaMemAdviseSetReadMostly, deviceId));
+		//Asynchronous prefetching of data
+		CUDA_RT_CALL(cudaMemPrefetchAsync(allChange_Del_cross_device, totalChangeEdges_Del_cross * sizeof(changeEdge), deviceId));
+
+		counter_border = 0;
+		CUDA_RT_CALL(cudaMallocManaged(&counter_border, sizeof(int)));
+		CUDA_RT_CALL(cudaMallocManaged(&affected_marked_border, totalLocalVertices * sizeof(int)));
+		CUDA_RT_CALL(cudaMemset(affected_marked_border, 0, totalLocalVertices * sizeof(int)));
+		CUDA_RT_CALL(cudaMallocManaged(&affectedNodeList_border, totalLocalVertices * sizeof(int)));
+		CUDA_RT_CALL(cudaMemset(affectedNodeList_border, 0, totalLocalVertices * sizeof(int)));
+		CUDA_RT_CALL(cudaMallocManaged(&previosVertexcolor_opv, total_opv * sizeof(int))); //total_opv is used here. previosVertexcolor_opv stores prev color of an opv
+		CUDA_RT_CALL(cudaMemset(previosVertexcolor_opv, -1, total_opv * sizeof(int)));
+
+		//modify adjacency list to adapt the deleted edges
+		deleteEdgeFromAdj_border << < numberOfBlocks, THREADS_PER_BLOCK >> > (allChange_Del_cross_device, totalChangeEdges_Del_cross, AdjListFull_border_device, AdjListTracker_border_device);
+		CUDA_RT_CALL(cudaGetLastError());
+		CUDA_RT_CALL(cudaDeviceSynchronize());
+	}
+
+	auto stopTime_transfer = high_resolution_clock::now();//Time calculation ends
+	auto duration_transfer = duration_cast<microseconds>(stopTime_transfer - startTime_transfer);// duration calculation
+	cout << "**Time taken to transfer graph data(border) from CPU to GPU: "
 		<< float(duration_transfer.count()) / 1000 << " milliseconds**" << endl;
 }
 

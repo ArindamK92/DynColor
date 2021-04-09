@@ -83,6 +83,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="all_structure_undir.cuh" />
+    <ClInclude Include="compactor.cuh" />
+    <ClInclude Include="gpuFunctions_undir.cuh" />
     <ClInclude Include="Supporting.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

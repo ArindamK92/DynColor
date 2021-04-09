@@ -1,0 +1,9 @@
+Run on Foundry. Forge will not work due to lower gcc version. On desktop it does not work properly.
+Use label propagation to get better partition(-l):
+./pulp graphSample.txt [no. of partition] -l
+
+
+****The write_parts function in io.cpp is modified to generate multiple partition files containing vertex id for each partitions
+file names are "partition<partition id>.txt"
+
+

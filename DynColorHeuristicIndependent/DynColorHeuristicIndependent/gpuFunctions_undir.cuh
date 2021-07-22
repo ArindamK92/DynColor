@@ -33,24 +33,39 @@ __device__ int BitCount(unsigned int mask)
 * FirstZeroBit fn finds first 0 bit and returns the index
 * It helps to find minimum available color in SC mask
 */
-__device__ int FirstZeroBit(int i)
+__device__ int FirstZeroBit(int* maskArray, int maskElement)
 {
-	i = ~i;
-	return BitCount((i & (-i)) - 1);
+	int firstZeroBit = -1;
+	for (int j = 0; j < maskElement; j++)
+	{
+		if (maskArray[j] < 4294967295) //2^32 -1 = 4294967295 //when all 32 bits are set to 1
+		{
+			int i = maskArray[j];
+			i = ~i;
+			firstZeroBit = BitCount((i & (-i)) - 1) + j * 32;
+			break;
+		}
+		
+	}
+	
+	return firstZeroBit;
 }
 
 /*
 * computeSC function creates a 32 bit mask, where ith bit is set if one of the adjacent vertex has color i
 */
-__device__ int computeSC(ColWt* AdjListFull_device, int* AdjListTracker_device, int node, int* vertexcolor) {
-	int saturationColorMask = 0;
+__device__ void computeSC(ColWt* AdjListFull_device, int* AdjListTracker_device, int node, int* vertexcolor, int* maskArray) {
+	//int saturationColorMask = 0;
+	int maskElement;
 	for (int j = AdjListTracker_device[node]; j < AdjListTracker_device[node + 1]; j++) {
 		if (AdjListFull_device[j].flag != -1)
 		{
-			saturationColorMask = saturationColorMask | int(exp2(double(vertexcolor[AdjListFull_device[j].col])));
+			maskElement = vertexcolor[AdjListFull_device[j].col]/32;
+			maskArray[maskElement] = maskArray[maskElement] | int(exp2(double(vertexcolor[AdjListFull_device[j].col]%32)));  //%32 is used so that in every element of the maskArray max value will be 2^32
+			//saturationColorMask = saturationColorMask | int(exp2(double(vertexcolor[AdjListFull_device[j].col])));
 		}
 	}
-	return saturationColorMask;
+	//return maskArray;
 }
 
 __global__ void printAdj(ColWt* AdjListFull_device, int* AdjListTracker_device, int nodes) {
@@ -86,16 +101,16 @@ __global__ void printMask(int* saturationColorMask, int* AdjListTracker_device, 
 	}
 }
 
-/*
-* computeSCMask is not in use currently
-*/
-__global__ void computeSCMask(ColWt* AdjListFull_device, int* AdjListTracker_device, int nodes, int* saturationColorMask, int* vertexcolor) {
-	for (int index = blockIdx.x * blockDim.x + threadIdx.x; index < nodes; index += blockDim.x * gridDim.x)
-	{
-		saturationColorMask[index] = computeSC(AdjListFull_device, AdjListTracker_device, index, vertexcolor);
-
-	}
-}
+///*
+//* computeSCMask is not in use currently
+//*/
+//__global__ void computeSCMask(ColWt* AdjListFull_device, int* AdjListTracker_device, int nodes, int* saturationColorMask, int* vertexcolor) {
+//	for (int index = blockIdx.x * blockDim.x + threadIdx.x; index < nodes; index += blockDim.x * gridDim.x)
+//	{
+//		saturationColorMask[index] = computeSC(AdjListFull_device, AdjListTracker_device, index, vertexcolor);
+//
+//	}
+//}
 
 /*
 * deleteEdgeFromAdj fn marks the del edges in adjacency list
@@ -129,15 +144,24 @@ __global__ void deleteEdgeFromAdj(changeEdge* allChange_Del_device, int totalCha
 /*
 * deleteEdge fn processes del edges and color if required
 */
-__global__ void deleteEdge(changeEdge* allChange_Del_device, int* vertexcolor, int* previosVertexcolor, int totalChangeEdges_Del, ColWt* AdjListFull_device, int* AdjListTracker_device, int* affected_del, int* change) {
+__global__ void deleteEdge(changeEdge* allChange_Del_device, int* vertexcolor, int* previosVertexcolor, int totalChangeEdges_Del, ColWt* AdjListFull_device, int* AdjListTracker_device, int* affected_del, int* change, int SCmaskArrayElement) {
 
 	for (int index = blockIdx.x * blockDim.x + threadIdx.x; index < totalChangeEdges_Del; index += blockDim.x * gridDim.x)
 	{
 		////Deletion case
+		//const int SCMarrayElement = SCmaskArrayElement;
 		int targeted_node = vertexcolor[allChange_Del_device[index].node1] > vertexcolor[allChange_Del_device[index].node2] ? allChange_Del_device[index].node1 : allChange_Del_device[index].node2;
-
-		int SCMask = computeSC(AdjListFull_device, AdjListTracker_device, targeted_node, vertexcolor);
-		int smallest_available_color = FirstZeroBit(SCMask);
+		int* maskArray = new int[SCmaskArrayElement];
+		for (int i = 0; i < SCmaskArrayElement; i++)
+		{
+			maskArray[i] = 0;
+		}
+		computeSC(AdjListFull_device, AdjListTracker_device, targeted_node, vertexcolor, maskArray);
+		/*for (int i = 0; i < SCmaskArrayElement; i++)
+		{
+			printf("printing mask value %d:%d\n", i,maskArray[i]);
+		}*/
+		int smallest_available_color = FirstZeroBit(maskArray, SCmaskArrayElement);
 
 		if (smallest_available_color != vertexcolor[targeted_node])
 		{
@@ -154,21 +178,36 @@ __global__ void deleteEdge(changeEdge* allChange_Del_device, int* vertexcolor, i
 /*
 * insEdge fn processes ins edges and color if required
 */
-__global__ void insEdge(changeEdge* allChange_Ins_device, int* vertexcolor, int* previosVertexcolor, int totalChangeEdges_Ins, ColWt* AdjListFull_device, int* AdjListTracker_device, int* affected_marked, int* change) {
+__global__ void insEdge(changeEdge* allChange_Ins_device, int* vertexcolor, int* previosVertexcolor, int totalChangeEdges_Ins, ColWt* AdjListFull_device, int* AdjListTracker_device, int* affected_marked, int* change, int SCmaskArrayElement) {
 
 	for (int index = blockIdx.x * blockDim.x + threadIdx.x; index < totalChangeEdges_Ins; index += blockDim.x * gridDim.x)
 	{
 		if (vertexcolor[allChange_Ins_device[index].node1] == vertexcolor[allChange_Ins_device[index].node2])
 		{
-			int SC_size_node1;
-			unsigned int sc_node1 = computeSC(AdjListFull_device, AdjListTracker_device, allChange_Ins_device[index].node1, vertexcolor);
-			SC_size_node1 = BitCount(sc_node1);
-			int SC_size_node2;
-			unsigned int sc_node2 = computeSC(AdjListFull_device, AdjListTracker_device, allChange_Ins_device[index].node2, vertexcolor);
-			SC_size_node2 = BitCount(sc_node2);
+			int SC_size_node1 = 0;
+			int SC_size_node2 = 0;
+			int* maskArray_node1 = new int[SCmaskArrayElement];
+			int* maskArray_node2 = new int[SCmaskArrayElement];
+			for (int i = 0; i < SCmaskArrayElement; i++)
+			{
+				maskArray_node1[i] = 0;
+				maskArray_node2[i] = 0;
+			}
+			/*unsigned int sc_node1 = */
+			computeSC(AdjListFull_device, AdjListTracker_device, allChange_Ins_device[index].node1, vertexcolor, maskArray_node1);
+			
+			
+			/*unsigned int sc_node2 = */
+			computeSC(AdjListFull_device, AdjListTracker_device, allChange_Ins_device[index].node2, vertexcolor, maskArray_node2);
+			for (int i = 0; i < SCmaskArrayElement; i++)
+			{
+				SC_size_node1 += BitCount(maskArray_node1[i]);
+				SC_size_node2 += BitCount(maskArray_node2[i]);
+			}
+			
 			int targeted_node = SC_size_node1 < SC_size_node2 ? allChange_Ins_device[index].node1 : allChange_Ins_device[index].node2;
-			int SCMask = SC_size_node1 < SC_size_node2 ? sc_node1 : sc_node2;
-			int smallest_available_color = FirstZeroBit(SCMask);
+			int* SCMask = SC_size_node1 < SC_size_node2 ? maskArray_node1 : maskArray_node2;
+			int smallest_available_color = FirstZeroBit(SCMask, SCmaskArrayElement);
 			previosVertexcolor[targeted_node] = vertexcolor[targeted_node];
 			vertexcolor[targeted_node] = smallest_available_color;
 			affected_marked[targeted_node] = 1;
@@ -219,13 +258,18 @@ __global__ void findEligibleNeighbors(int* affectedNodeList, ColWt* AdjListFull_
 /*
 * recolors the selected vertices in findEligibleNeighbors fn
 */
-__global__ void recolorNeighbor(int* affectedNodeList, int* vertexcolor, int* previosVertexcolor, ColWt* AdjListFull_device, int* AdjListTracker_device, int* affected_marked, int* counter_del, int* change) {
+__global__ void recolorNeighbor(int* affectedNodeList, int* vertexcolor, int* previosVertexcolor, ColWt* AdjListFull_device, int* AdjListTracker_device, int* affected_marked, int* counter_del, int* change, int SCmaskArrayElement) {
 
 	for (int index = blockIdx.x * blockDim.x + threadIdx.x; index < *counter_del; index += blockDim.x * gridDim.x)
 	{
 		int targeted_node = affectedNodeList[index];
-		int SCMask = computeSC(AdjListFull_device, AdjListTracker_device, targeted_node, vertexcolor);
-		int smallest_available_color = FirstZeroBit(SCMask);
+		int* maskArray = new int[SCmaskArrayElement];
+		for (int i = 0; i < SCmaskArrayElement; i++)
+		{
+			maskArray[i] = 0;
+		}
+		computeSC(AdjListFull_device, AdjListTracker_device, targeted_node, vertexcolor, maskArray);
+		int smallest_available_color = FirstZeroBit(maskArray, SCmaskArrayElement);
 		previosVertexcolor[targeted_node] = vertexcolor[targeted_node];
 		vertexcolor[targeted_node] = smallest_available_color;
 		affected_marked[targeted_node] = 1;

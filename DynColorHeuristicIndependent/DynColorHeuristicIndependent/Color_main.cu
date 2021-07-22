@@ -50,6 +50,7 @@ int main(int argc, char* argv[]) {
 	int* vertexcolor;
 	int* previosVertexcolor;
 	float total_time = 0.0;
+	int SCmaskArrayElement;
 
 
 	////Get gpu device id and number of SMs
@@ -59,11 +60,14 @@ int main(int argc, char* argv[]) {
 
 
 	////read input vertex color label
+	int maxColor = -1;
 	cudaStatus = cudaMallocManaged(&vertexcolor, nodes * sizeof(int));
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaMalloc failed at vertexcolor structure");
 	}
-	read_Input_Color(vertexcolor, inputColorfile);
+	read_Input_Color(vertexcolor, inputColorfile, &maxColor);
+	SCmaskArrayElement = maxColor / 32 + 2; //we take 1 element extra to manage the situation if number of color increases
+	printf("Max color id in input graph: %d\n", maxColor);
 
 
 	////Read Original input graph
@@ -145,7 +149,7 @@ int main(int argc, char* argv[]) {
 	if (zeroDelFlag != true) {
 		auto startTimeDelEdge = high_resolution_clock::now(); //Time calculation start
 
-		deleteEdge << < numberOfBlocks, THREADS_PER_BLOCK >> > (allChange_Del_device, vertexcolor, previosVertexcolor, totalChangeEdges_Del, AdjListFull_device, AdjListTracker_device, affected_marked, change);
+		deleteEdge << < numberOfBlocks, THREADS_PER_BLOCK >> > (allChange_Del_device, vertexcolor, previosVertexcolor, totalChangeEdges_Del, AdjListFull_device, AdjListTracker_device, affected_marked, change, SCmaskArrayElement);
 		cudaDeviceSynchronize(); //comment this if required
 
 		auto stopTimeDelEdge = high_resolution_clock::now();//Time calculation ends
@@ -155,11 +159,11 @@ int main(int argc, char* argv[]) {
 		total_time += float(durationDelEdge.count()) / 1000;
 	}
 
-	////Process ins edges
+	//Process ins edges
 	if (zeroInsFlag != true) {
 		auto startTimeInsEdge = high_resolution_clock::now(); //Time calculation start
 
-		insEdge << < numberOfBlocks, THREADS_PER_BLOCK >> > (allChange_Ins_device, vertexcolor, previosVertexcolor, totalChangeEdges_Ins, AdjListFull_device, AdjListTracker_device, affected_marked, change);
+		insEdge << < numberOfBlocks, THREADS_PER_BLOCK >> > (allChange_Ins_device, vertexcolor, previosVertexcolor, totalChangeEdges_Ins, AdjListFull_device, AdjListTracker_device, affected_marked, change, SCmaskArrayElement);
 		cudaDeviceSynchronize(); //comment this if required
 
 		auto stopTimeInsEdge = high_resolution_clock::now();//Time calculation ends
@@ -193,7 +197,7 @@ int main(int argc, char* argv[]) {
 		}*/
 		cudaMemset(affected_marked, 0, nodes * sizeof(int)); //new
 		//recolor the eligible neighbors
-		recolorNeighbor << < numberOfBlocks, THREADS_PER_BLOCK >> > (affectedNodeList, vertexcolor, previosVertexcolor, AdjListFull_device, AdjListTracker_device, affected_marked, counter, change);
+		recolorNeighbor << < numberOfBlocks, THREADS_PER_BLOCK >> > (affectedNodeList, vertexcolor, previosVertexcolor, AdjListFull_device, AdjListTracker_device, affected_marked, counter, change, SCmaskArrayElement);
 		cudaDeviceSynchronize();
 	}
 	auto stopTimeDelNeig = high_resolution_clock::now();//Time calculation ends
@@ -204,11 +208,22 @@ int main(int argc, char* argv[]) {
 	cout << "****Total Time for Vertex Color Update: "
 		<< total_time << " milliseconds****" << endl;
 
-	/*printf("\nprinting output vertex colors:\n");
+	////print output vertex color
+	//printf("\nprinting output vertex colors:\n");
+	//for (int i = 0; i < nodes; i++)
+	//{
+	//	printf("%d:%d\n", i, vertexcolor[i]);
+	//}
+	
+	//Print max color id used
+	maxColor = -1;
 	for (int i = 0; i < nodes; i++)
 	{
-		printf("%d:%d\n", i, vertexcolor[i]);
-	}*/
+		if (vertexcolor[i] > maxColor) {
+			maxColor = vertexcolor[i];
+		}
+	}
+	printf("highest color id used: %d\n", maxColor);
 
 	validate << < numberOfBlocks, THREADS_PER_BLOCK >> > (AdjListFull_device, AdjListTracker_device, nodes, vertexcolor);
 	cudaDeviceSynchronize();

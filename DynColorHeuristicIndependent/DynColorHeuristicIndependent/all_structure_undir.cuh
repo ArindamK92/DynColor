@@ -127,7 +127,7 @@ void readin_changes(char* myfile, vector<changeEdge>& allChange_Ins, vector<chan
 read_Input_Color reads input color lebel file.
 accepted data format: node color
 */
-void read_Input_Color(int* vertexcolor, char* myfile)
+void read_Input_Color(int* vertexcolor, char* myfile, int* maxColor)
 {
 	FILE* graph_file;
 	char line[128];
@@ -138,6 +138,10 @@ void read_Input_Color(int* vertexcolor, char* myfile)
 		int node, color;
 		sscanf(line, "%d %d", &node, &color);
 		vertexcolor[node] = color;
+		if (color > *maxColor)
+		{
+			*maxColor = color;
+		}
 	}
 	fclose(graph_file);
 

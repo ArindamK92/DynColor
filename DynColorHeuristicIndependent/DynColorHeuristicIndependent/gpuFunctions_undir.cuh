@@ -171,6 +171,7 @@ __global__ void deleteEdge(changeEdge* allChange_Del_device, int* vertexcolor, i
 			*change = 1;
 			//printf("color of %d became:%d", targeted_node, vertexcolor[targeted_node]);
 		}
+		delete[] maskArray;
 		//printf("affected_del flag for %d = %d \n *change = %d\n", targeted_node, affected_del[targeted_node], *change);
 	}
 }
@@ -212,6 +213,8 @@ __global__ void insEdge(changeEdge* allChange_Ins_device, int* vertexcolor, int*
 			vertexcolor[targeted_node] = smallest_available_color;
 			affected_marked[targeted_node] = 1;
 			*change = 1;
+			delete[] maskArray_node1;
+			delete[] maskArray_node2;
 			//printf("Ins: color of %d became:%d", targeted_node, vertexcolor[targeted_node]);	
 			//printf("affected_ins flag for %d = %d \n *change = %d\n", targeted_node, affected_marked[targeted_node], *change);
 		}
@@ -274,6 +277,7 @@ __global__ void recolorNeighbor(int* affectedNodeList, int* vertexcolor, int* pr
 		vertexcolor[targeted_node] = smallest_available_color;
 		affected_marked[targeted_node] = 1;
 		*change = 1;
+		delete[] maskArray;
 		//printf("color of %d became:%d", targeted_node, vertexcolor[targeted_node]);
 		//printf("affected_marked flag for %d = %d \n *change = %d\n", targeted_node, affected_marked[targeted_node], *change);
 	}
